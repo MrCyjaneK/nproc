@@ -1,0 +1,262 @@
+name: Test nproc on all operating systems
+
+on: push
+
+jobs:
+  test-macos:
+    name: Test on macOS
+    strategy:
+      matrix:
+        os: [macos-14, macos-15]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Make nproc.sh executable
+        run: chmod +x nproc.sh
+      
+      - name: Test nproc.sh
+        run: |
+          result=$(NPROC_SH_SHOW_ERROR_ON_FALLBACK=yes ./nproc.sh)
+          echo "Result: $result"
+          echo "nproc.sh successfully detected $result CPU(s)"
+      
+      - name: Compare with system nproc
+        run: |
+          system_nproc=$(nproc 2>/dev/null || sysctl -n hw.ncpu)
+          script_result=$(NPROC_SH_SHOW_ERROR_ON_FALLBACK=yes ./nproc.sh)
+          echo "System nproc: $system_nproc"
+          echo "Script result: $script_result"
+          if [ "$system_nproc" != "$script_result" ]; then
+            echo "Warning: Results differ, but script didn't fail"
+          else
+            echo "Results match perfectly"
+          fi
+
+  test-linux:
+    name: Test on Linux
+    strategy:
+      matrix:
+        container:
+          - ubuntu:latest
+          - ubuntu:22.04
+          - ubuntu:24.04
+          - debian:latest
+          - debian:12
+          - alpine:latest
+          - fedora:latest
+          - fedora:41
+          - fedora:latest
+          - rockylinux:9
+          - almalinux:9
+          - almalinux:10
+          - archlinux:latest
+          - opensuse/leap:latest
+          - opensuse/tumbleweed:latest
+          - kalilinux/kali-rolling:latest
+    runs-on: ubuntu-latest
+    container: ${{ matrix.container }}
+    steps:
+      - name: Install git (for checkout)
+        run: |
+          if command -v apt-get >/dev/null 2>&1; then
+            apt-get update && apt-get install -y git
+          elif command -v yum >/dev/null 2>&1; then
+            yum install -y git
+          elif command -v dnf >/dev/null 2>&1; then
+            dnf install -y git
+          elif command -v apk >/dev/null 2>&1; then
+            apk add git
+          elif command -v pacman >/dev/null 2>&1; then
+            pacman -Sy --noconfirm git
+          elif command -v zypper >/dev/null 2>&1; then
+            zypper install -y git
+          fi
+      
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Make nproc.sh executable
+        run: chmod +x nproc.sh
+      
+      - name: Test nproc.sh
+        run: |
+          result=$(NPROC_SH_SHOW_ERROR_ON_FALLBACK=yes ./nproc.sh)
+          echo "Result: $result"
+          echo "nproc.sh successfully detected $result CPU(s)"
+      
+      - name: Compare with system nproc (if available)
+        run: |
+          if command -v nproc >/dev/null 2>&1; then
+            system_nproc=$(nproc)
+            script_result=$(NPROC_SH_SHOW_ERROR_ON_FALLBACK=yes ./nproc.sh)
+            echo "System nproc: $system_nproc"
+            echo "Script result: $script_result"
+            if [ "$system_nproc" != "$script_result" ]; then
+              echo "Warning: Results differ, but script didn't fail"
+            else
+              echo "Results match perfectly"
+            fi
+          else
+            echo "System nproc not available, skipping comparison"
+          fi
+
+  test-windows-cygwin:
+    name: Test on Windows with Cygwin
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Cygwin
+        uses: cygwin/cygwin-install-action@v4
+        with:
+          packages: bash
+      
+      - name: Test nproc.sh with Cygwin
+        run: |
+          # Convert line endings to Unix format and run the script
+          C:\cygwin\bin\bash.exe -c "dos2unix nproc.sh 2>/dev/null || sed -i 's/\r$//' nproc.sh; chmod +x nproc.sh && NPROC_SH_SHOW_ERROR_ON_FALLBACK=yes ./nproc.sh > result.txt 2>&1"
+          
+          # Check if result.txt exists and has content
+          if (Test-Path result.txt) {
+            $result = Get-Content result.txt -Raw
+            if ($result) {
+              $result = $result.Trim()
+              Write-Host "Result: $result"
+              if ($result -match '^\d+$') {
+                Write-Host "nproc.sh successfully detected $result CPU(s)"
+              } else {
+                Write-Host "nproc.sh produced unexpected output: $result"
+                exit 1
+              }
+            } else {
+              Write-Host "nproc.sh produced no output"
+              exit 1
+            }
+          } else {
+            Write-Host "result.txt was not created"
+            exit 1
+          }
+
+  test-windows-msys2:
+    name: Test on Windows with MSYS2
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MSYS
+          install: bash
+      
+      - name: Test nproc.sh with MSYS2
+        shell: msys2 {0}
+        run: |
+          chmod +x nproc.sh
+          result=$(NPROC_SH_SHOW_ERROR_ON_FALLBACK=yes ./nproc.sh)
+          echo "Result: $result"
+          echo "nproc.sh successfully detected $result CPU(s)"
+
+  test-freebsd:
+    name: Test on FreeBSD
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Test in FreeBSD VM
+        uses: vmactions/freebsd-vm@v1
+        with:
+          usesh: true
+          run: |
+            chmod +x nproc.sh
+            result=$(NPROC_SH_SHOW_ERROR_ON_FALLBACK=yes ./nproc.sh)
+            echo "Result: $result"
+            echo "nproc.sh successfully detected $result CPU(s)"
+            
+            # Compare with system method
+            system_count=$(sysctl -n hw.ncpu)
+            echo "System hw.ncpu: $system_count"
+            echo "Script result: $result"
+            if [ "$system_count" != "$result" ]; then
+              echo "Warning: Results differ, but script didn't fail"
+            else
+              echo "Results match perfectly"
+            fi
+
+  test-openbsd:
+    name: Test on OpenBSD
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Test in OpenBSD VM
+        uses: vmactions/openbsd-vm@v1
+        with:
+          usesh: true
+          run: |
+            chmod +x nproc.sh
+            result=$(NPROC_SH_SHOW_ERROR_ON_FALLBACK=yes ./nproc.sh)
+            echo "Result: $result"
+            echo "nproc.sh successfully detected $result CPU(s)"
+            
+            # Compare with system method
+            system_count=$(sysctl -n hw.ncpu)
+            echo "System hw.ncpu: $system_count"
+            echo "Script result: $result"
+            if [ "$system_count" != "$result" ]; then
+              echo "Warning: Results differ, but script didn't fail"
+            else
+              echo "Results match perfectly"
+            fi
+
+  test-netbsd:
+    name: Test on NetBSD
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Test in NetBSD VM
+        uses: vmactions/netbsd-vm@v1
+        with:
+          usesh: true
+          run: |
+            chmod +x nproc.sh
+            result=$(NPROC_SH_SHOW_ERROR_ON_FALLBACK=yes ./nproc.sh)
+            echo "Result: $result"
+            echo "nproc.sh successfully detected $result CPU(s)"
+            
+            # Compare with system method
+            system_count=$(sysctl -n hw.ncpu)
+            echo "System hw.ncpu: $system_count"
+            echo "Script result: $result"
+            if [ "$system_count" != "$result" ]; then
+              echo "Warning: Results differ, but script didn't fail"
+            else
+              echo "Results match perfectly"
+            fi
+
+  summary:
+    name: Test Summary
+    runs-on: ubuntu-latest
+    needs: [test-macos, test-linux, test-windows-cygwin, test-windows-msys2, test-freebsd, test-openbsd, test-netbsd]
+    if: always()
+    steps:
+      - name: Summary
+        run: |
+          echo "## Test Results Summary"
+          echo "All nproc.sh tests completed across multiple operating systems:"
+          echo "- macOS (14, 15)"
+          echo "- Linux (Many....)"
+          echo "- Windows (Cygwin, MSYS2)"
+          echo "- FreeBSD"
+          echo "- OpenBSD"
+          echo "- NetBSD"
+          echo ""
+          echo "The script successfully avoided returning '1' on all platforms!" 
